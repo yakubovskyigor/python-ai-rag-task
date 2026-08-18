@@ -1,6 +1,12 @@
-from src.normalization import merge_duplicates, merge_value, normalize_catalog
 import pandas as pd
 import pytest
+
+from src.normalization import (
+    merge_duplicates,
+    merge_value,
+    normalize_catalog,
+    find_near_duplicate_skus,
+)
 from decimal import Decimal
 
 
@@ -76,3 +82,36 @@ def test_normalize_catalog():
     assert result.iloc[0]["price"] == Decimal("1990.00")
     assert result.iloc[0]["currency"] == "PLN"
     assert result.iloc[0]["attributes"] == "store at 4C"
+
+
+def test_find_near_duplicate_skus():
+    df = pd.DataFrame(
+        [
+            {
+                "nr_katalogowy": "CH-10248",
+                "nazwa": "Product A",
+                "producent": "Test",
+                "kategoria": "PCR reagents",
+                "opakowanie": "50 rxn",
+                "cena": "1000 PLN",
+                "atrybuty_dodatkowe": None,
+            },
+            {
+                "nr_katalogowy": "CH-10248A",
+                "nazwa": "Product A",
+                "producent": "Test",
+                "kategoria": "PCR reagents",
+                "opakowanie": "50 rxn",
+                "cena": "1000 PLN",
+                "atrybuty_dodatkowe": None,
+            },
+        ]
+    )
+
+    result = find_near_duplicate_skus(df)
+
+    assert len(result) == 1
+    assert result[0]["sku1"] == "CH-10248"
+    assert result[0]["sku2"] == "CH-10248A"
+    assert result[0]["matching_fields"] == 6
+    assert result[0]["similarity"] >= 0.9

@@ -250,9 +250,12 @@ def normalize_catalog(
 
 if __name__ == "__main__":
     data_path = Path(__file__).parent.parent / "data" / "Data_katalog_probka.csv"
-
     df = pd.read_csv(data_path)
-
     normalized_df = normalize_catalog(df)
+    near_duplicates = find_near_duplicate_skus(df)
+    print("\nNear-duplicate SKU candidates:")
+
+    for candidate in near_duplicates:
+        print(candidate)
 
     print(normalized_df.isna().sum())
