@@ -48,7 +48,7 @@ python-ai-rag-task/
 
 The source CSV contains inconsistent representations of the same product attributes.
 
-The normalized schema is:
+The normalized schema contains:
 
 ```text
 sku
@@ -61,6 +61,13 @@ attributes
 package_quantity
 package_unit
 currency
+```
+
+The harvester additionally enriches the catalog with:
+
+```text
+description
+specs
 ```
 
 ### Category normalization
@@ -134,28 +141,41 @@ Exact duplicate catalog numbers are grouped together.
 
 For conflicting values, the implementation does not silently choose one value. If multiple non-null values exist for the same field, a conflict is raised.
 
-For near-duplicate SKUs, similarity is calculated using `SequenceMatcher`.
+Near-duplicate SKU candidates are detected using Levenshtein edit distance.
 
-SKU similarity alone is not considered sufficient to merge products.
+A candidate is treated as a possible SKU typo when:
 
-A candidate is treated as a duplicate only when the SKU is highly similar and all comparison fields match:
+- the manufacturer matches;
+- the Levenshtein distance between the harvested SKU and catalog SKU is at most 1.
+
+This allows the harvester to detect the provided typo:
 
 ```text
-name
-manufacturer
-category
-package
-price
-attributes
+NO-103l6 → NO-10316
 ```
 
-This prevents accidentally merging different products that happen to have similar catalog numbers.
+while avoiding false matches such as:
+
+```text
+NO-10500 → NO-10001
+```
+
+Near-duplicate catalog records are not automatically merged. They are reported as candidates for review because similar SKUs may represent valid product variants.
+
+For the provided catalog, the detected near-duplicate candidates are:
+
+```text
+CH-10248  ↔  CH-10248A
+PO-10093  ↔  PO-10093A
+```
+
+Both pairs have identical comparison fields, but they are kept as separate records because the `A` suffix may represent a valid product variant.
 
 ---
 
 ## 3. Product Data Harvester
 
-The manufacturer snapshot is parsed and product cards are extracted from the HTML.
+The manufacturer snapshot is parsed using BeautifulSoup.
 
 Each product card contains information such as:
 
@@ -172,7 +192,19 @@ The harvester extracts all available product cards and then tries to match them 
 
 The primary matching key is the catalog number.
 
-Product names are not used as the primary matching key because the task explicitly states that names may differ between sources.
+Product names are not used as the primary matching key because names may differ between sources.
+
+The matching process is:
+
+```text
+exact SKU
+    ↓
+SKU typo candidate
+    ↓
+unmatched
+```
+
+For SKU typo detection, the manufacturer must match and the Levenshtein distance between SKUs must be at most 1.
 
 ### SKU typo
 
@@ -190,7 +222,12 @@ NO-10316
 
 The `l` character is an obvious typo.
 
-The matching logic detects this case by comparing the SKU similarity together with the manufacturer and product name.
+The matching logic detects this difference using Levenshtein edit distance:
+
+```text
+NO-103l6 → NO-10316
+distance = 1
+```
 
 The record is therefore matched as:
 
@@ -198,7 +235,7 @@ The record is therefore matched as:
 NO-103l6 → NO-10316
 ```
 
-and marked as a SKU typo match.
+and marked as a `sku_typo` match.
 
 ### Products without a catalog match
 
@@ -211,7 +248,7 @@ NO-99999
 
 They are not automatically inserted into the catalog.
 
-This is intentional: the task states that the snapshot may contain products outside the main catalog, and manual enrichment of such products is not required.
+This is intentional: the snapshot may contain products outside the main catalog, and manual enrichment of such products is not required.
 
 ---
 
@@ -246,7 +283,7 @@ sentence-transformers/
 paraphrase-multilingual-MiniLM-L12-v2
 ```
 
-The model supports multilingual semantic similarity, which is useful because the catalog contains Polish product names while queries may be written in English.
+The model supports multilingual semantic similarity, which is useful because the catalog contains Polish product names while queries may be written in English or Polish.
 
 FAISS is used for vector similarity search.
 
@@ -272,6 +309,12 @@ products for isolating RNA from blood
 
 first restricts the catalog to NovaGen Labs products and then performs semantic search within that subset.
 
+The search also works with Polish queries, for example:
+
+```text
+produkty do izolacji RNA z krwi
+```
+
 ---
 
 ## 5. Scoring and Explanation
@@ -293,7 +336,9 @@ match_type = exact_sku
 
 For semantic matches, the score is the similarity returned by the embedding search.
 
-A short explanation is generated based on the semantic score, for example:
+A short explanation is generated based on the semantic score.
+
+For example:
 
 ```text
 Strong semantic match with the user query.
@@ -303,6 +348,12 @@ or:
 
 ```text
 Good semantic match with the user query.
+```
+
+Lower-scoring results are described as:
+
+```text
+Weaker semantic match; included among the top results.
 ```
 
 ---
@@ -324,13 +375,19 @@ pip install -r requirements.txt
 ### Run normalization
 
 ```bash
-python src/normalization.py
+python -m src.normalization
 ```
 
 ### Run the harvester
 
 ```bash
-python src/harvester.py
+python -m src.harvester
+```
+
+The harvester processes the manufacturer HTML snapshot, performs SKU matching, reports unmatched products, and saves the enriched catalog to:
+
+```text
+data/normalized_catalog.csv
 ```
 
 ### Search by SKU
@@ -361,7 +418,7 @@ python src/hybrid_search.py "RNA isolation" --category "Nucleic Acid Isolation"
 
 ## 7. Tests
 
-The project contains tests for both normalization and search functionality.
+The project contains tests for normalization, duplicate handling, and hybrid search functionality.
 
 Run all tests:
 
@@ -369,18 +426,24 @@ Run all tests:
 python -m pytest
 ```
 
-The current test suite contains 7 tests covering:
+The current test suite contains 11 tests covering:
 
 - catalog normalization;
+- exact duplicate merging;
+- conflicting duplicate values;
+- near-duplicate SKU detection;
 - exact SKU matching;
 - semantic search;
 - manufacturer filtering;
-- fallback to semantic search for an unknown SKU.
+- category filtering;
+- multilingual semantic search;
+- fallback to semantic search for an unknown SKU;
+- exact SKU behavior with filters.
 
 Expected result:
 
 ```text
-7 passed
+11 passed
 ```
 
 ---
@@ -407,6 +470,26 @@ SKU is a deterministic identifier. If it exists in the catalog, semantic similar
 
 Therefore, exact SKU matching takes priority over semantic retrieval.
 
+### Why use Levenshtein distance for SKU typo detection?
+
+SKU values are structured identifiers, so a small edit distance is more meaningful than general semantic similarity.
+
+The provided typo differs from the catalog SKU by one character:
+
+```text
+NO-103l6
+NO-10316
+```
+
+Using a maximum Levenshtein distance of 1 provides a simple and deterministic rule for the provided dataset while avoiding false matches such as:
+
+```text
+NO-10500
+NO-10001
+```
+
+In a production system, this threshold would be calibrated using labeled historical matching data.
+
 ### What could be improved with more time?
 
 For a larger production system I would consider:
@@ -429,5 +512,7 @@ This implementation is intentionally small and focused on the requirements of th
 The semantic index is built in memory during execution rather than persisted between runs.
 
 The current scoring is based directly on embedding similarity for semantic results and a deterministic score of `1.0` for exact SKU matches.
+
+SKU typo matching uses a deterministic Levenshtein distance threshold and is designed for the provided dataset.
 
 The solution is designed for the provided dataset rather than for production-scale catalog volumes.

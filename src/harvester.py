@@ -1,8 +1,8 @@
-from difflib import SequenceMatcher
 from pathlib import Path
 
 import pandas as pd
 from bs4 import BeautifulSoup
+from rapidfuzz.distance import Levenshtein
 
 from src.normalization import normalize_catalog
 
@@ -46,36 +46,25 @@ def harvest_products(soup) -> list[dict]:
     return [parse_product(product) for product in products]
 
 
-def match_by_name(
-    record: dict,
-    catalog: pd.DataFrame,
-) -> pd.DataFrame:
-    return catalog[catalog["name"].str.casefold() == record["name"].casefold()]
-
-
 def match_sku_typo(
     record: dict,
     catalog: pd.DataFrame,
 ) -> str | None:
-    candidates = catalog[catalog["name"].str.casefold() == record["name"].casefold()]
-
-    candidates = candidates[
-        candidates["manufacturer"].str.casefold() == record["manufacturer"].casefold()
+    candidates = catalog[
+        catalog["manufacturer"].str.casefold() == record["manufacturer"].casefold()
     ]
 
     best_match = None
-    best_similarity = 0.0
 
     for _, row in candidates.iterrows():
-        similarity = SequenceMatcher(
-            None,
+        distance = Levenshtein.distance(
             record["sku"],
             row["sku"],
-        ).ratio()
+        )
 
-        if similarity > best_similarity:
-            best_similarity = similarity
+        if distance <= 1:
             best_match = row["sku"]
+            break
 
     return best_match
 
