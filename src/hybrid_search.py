@@ -161,24 +161,20 @@ def hybrid_search(
     category: str | None = None,
     top_k: int = 5,
 ) -> pd.DataFrame:
-
-    # 1. Exact SKU match has priority.
-    exact_matches = exact_sku_search(
-        query,
-        catalog,
-    )
-
-    if not exact_matches.empty:
-        return build_exact_results(exact_matches)
-
-    # 2. Apply filters before semantic retrieval.
     filtered_catalog = filter_catalog(
         catalog,
         manufacturer=manufacturer,
         category=category,
     )
 
-    # 3. Semantic retrieval.
+    exact_matches = exact_sku_search(
+        query,
+        filtered_catalog,
+    )
+
+    if not exact_matches.empty:
+        return build_exact_results(exact_matches)
+
     semantic_results = semantic_search(
         query,
         filtered_catalog,
@@ -186,7 +182,6 @@ def hybrid_search(
         top_k=top_k,
     )
 
-    # 4. Add score and explanation.
     return build_semantic_results(semantic_results)
 
 
