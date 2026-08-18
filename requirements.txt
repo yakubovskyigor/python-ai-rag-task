@@ -2,3 +2,4 @@ pandas
 sentence-transformers
 faiss-cpu
 pytest
+beautifulsoup4
